@@ -1,5 +1,10 @@
 ### Hi there 👋
 
+<div align="center">
+  <a href="https://makdoudn.github.io/">Blog</a> - WIP
+</div>
+
+
 <!--
 **makdoudN/makdoudn** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
 
