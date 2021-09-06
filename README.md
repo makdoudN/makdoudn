@@ -1,7 +1,7 @@
 ### Hi there 👋
 
 <div align="center">
-  <a href="https://makdoudn.github.io/">Blog</a> - WIP
+  <a href="https://makdoudn.github.io/">Blog</a> 
 </div>
 
 
