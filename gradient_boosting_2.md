@@ -260,6 +260,128 @@ This is actually a feature, not a bug. The constraint that $h_m \in \mathcal{H}$
 
 The learning rate $\nu$ provides additional regularization—smaller values mean we trust each gradient approximation less, taking more conservative steps. This is the bias-variance trade-off manifesting in the boosting framework.
 
+## The Interpolation Problem: How Gradients Propagate to Unseen Points
+
+There's a subtlety we've been glossing over, and it's worth examining carefully because it reveals something fundamental about why the choice of hypothesis class matters so much.
+
+We compute the functional gradient at $n$ training points: $\{x_1, \ldots, x_n\}$. This gives us $n$ scalar values:
+$$
+g_i = -\frac{\partial L(y_i, f_m(x_i))}{\partial f_m(x_i)} \quad \text{for } i = 1, \ldots, n
+$$
+
+Then we fit a function $h_m \in \mathcal{H}$ to these values. But here's the key question: *what is $h_m(x)$ for $x \notin \{x_1, \ldots, x_n\}$?*
+
+We only have gradient information at training points. What happens at test points is entirely determined by how our hypothesis class $\mathcal{H}$ *interpolates* or *extrapolates* from the training data.
+
+This might seem like a mundane point—isn't this just what supervised learning always does? But in the context of functional gradient descent, it's deeper than it appears. We're not just fitting arbitrary functions to arbitrary targets. We're approximating a *gradient direction* in function space, and how we extend that direction to unseen points fundamentally shapes the optimization trajectory.
+
+### Inductive Bias as Gradient Propagation
+
+Let's make this concrete with decision trees, the most common base learner for gradient boosting.
+
+Suppose we fit a regression tree with maximum depth $d$ to the pseudo-residuals $\{(x_i, g_i)\}_{i=1}^n$. The tree partitions the input space $\mathbb{R}^p$ into regions $R_1, \ldots, R_K$ (where $K \leq 2^d$), and predicts a constant value in each region:
+$$
+h_m(x) = \sum_{k=1}^K c_k \mathbb{1}[x \in R_k]
+$$
+
+where $c_k$ is typically the mean of the pseudo-residuals in region $k$:
+$$
+c_k = \frac{1}{|R_k|} \sum_{x_i \in R_k} g_i
+$$
+
+Now, what's happening here? The tree is making a crucial inductive assumption: *all points in the same region should move in the same gradient direction*.
+
+If training points $x_i$ and $x_j$ fall in the same leaf, their pseudo-residuals get averaged, and *any test point* $x$ in that leaf receives the same gradient correction. The tree's splitting criterion (typically minimizing squared error on $g_i$) is choosing which points to group together—it's deciding how gradient information should be shared across input space.
+
+### Different Hypothesis Classes, Different Propagation
+
+This perspective illuminates why the choice of $\mathcal{H}$ is so critical. Different hypothesis classes propagate gradient information in fundamentally different ways:
+
+**Decision Trees**: Partition space into regions with constant predictions. Gradient information propagates via *similarity in feature space*—points that fall in the same region get the same update, regardless of their actual distance. A tree with axis-aligned splits imposes a strong prior: gradients should be constant within hyperrectangular regions.
+
+**Smoothness-based methods** (like regression splines or kernel methods): Nearby points in input space receive similar gradient corrections. The inductive bias is continuity—the gradient direction should vary smoothly. A point's update is influenced by a *neighborhood* of training points, weighted by distance.
+
+**Neural Networks**: Learn hierarchical feature representations. Gradient information propagates through learned features—points that activate similar neurons receive similar updates. The inductive bias is that gradient structure should align with compositional features.
+
+**Linear Models**: Assume the gradient direction is a linear function of inputs:
+$$
+h_m(x) = w^\top x + b
+$$
+This is an extremely strong assumption: the correction should be the same hyperplane for all iterations.
+
+### Why This Matters for Optimization
+
+In standard gradient descent with parameters $\theta$, every component gets its own gradient. If we have 1000 parameters, we get 1000 gradient values, one for each parameter. The update is exact (modulo sampling noise in SGD).
+
+In functional gradient boosting, we might have millions of possible inputs $x$, but only $n$ training points. The functional gradient is fundamentally *underspecified* away from training data. The hypothesis class $\mathcal{H}$ fills in the missing information by imposing structure.
+
+This has profound implications:
+
+1. **Generalization through structure**: The inductive bias of $\mathcal{H}$ determines which gradient directions are even *expressible*. A shallow tree can't represent a gradient that varies smoothly—it must discretize. This constraint acts as regularization.
+
+2. **Sample efficiency**: If the true optimal gradient direction aligns with the inductive bias of $\mathcal{H}$, we can generalize from few examples. If you're learning a piecewise-constant function, trees are sample-efficient. If you're learning a smooth function, trees waste capacity.
+
+3. **The depth hyperparameter**: When we increase tree depth, we're not just increasing model capacity—we're changing how finely we discretize the gradient field. Depth 1 assumes the gradient is constant everywhere. Depth 2 assumes at most 4 different gradient regions. Depth $d$ allows $2^d$ regions.
+
+4. **Interaction between iterations**: Each $h_m$ propagates gradient information according to the same inductive bias. Over many iterations, this compounds. Trees naturally discover interactions: splits at iteration $m$ can depend on residual patterns created by previous trees.
+
+### A Concrete Example
+
+Consider a simple 1D problem. Our current model underpredicts in region $[0, 0.5]$ and overpredicts in $[0.5, 1]$. The pseudo-residuals reflect this:
+- Points with $x < 0.5$: $g_i > 0$ (increase predictions)
+- Points with $x > 0.5$: $g_i < 0$ (decrease predictions)
+
+**A depth-1 tree** might split at $x = 0.5$, creating:
+$$
+h_m(x) = \begin{cases}
+\bar{g}_{\text{left}} & \text{if } x < 0.5 \\
+\bar{g}_{\text{right}} & \text{if } x \geq 0.5
+\end{cases}
+$$
+
+Every point with $x < 0.5$ gets the same correction, the average gradient in that region. The tree has decided that all points to the left of 0.5 are similar enough to share a gradient direction.
+
+**A linear model** would fit:
+$$
+h_m(x) = w \cdot x + b
+$$
+
+It assumes the gradient changes linearly across the input space. This is a very different structural assumption—it smoothly interpolates rather than discretely partitioning.
+
+**A depth-3 tree** could have up to 8 regions, capturing finer gradient structure. Maybe there's a subregion in $[0, 0.25]$ that needs a different correction than $[0.25, 0.5]$.
+
+In each case, the choice of hypothesis class determines:
+- How we group training points
+- How gradient information transfers to test points
+- What patterns we can and cannot represent
+- How we trade off between fitting the empirical gradient and generalizing
+
+### The Deep Connection to Regularization
+
+Here's the key insight: the approximation error in fitting the functional gradient isn't just about *accuracy*—it's about *generalization*.
+
+If we could fit the functional gradient perfectly at training points and had a perfect interpolation to test points (say, knowing the true data distribution), we'd do exact gradient descent in function space. We'd minimize training loss perfectly and likely overfit catastrophically.
+
+But we can't. Our base learners in $\mathcal{H}$ are limited. They impose structure. They force us to share gradient information across points in structured ways. This is exactly what we need for generalization.
+
+The "approximation" in approximate functional gradient descent is not a limitation to overcome—it's a feature to exploit. The structure of $\mathcal{H}$ embeds prior knowledge about how function changes should propagate through input space.
+
+This is why shallow trees work so well in practice. They're not good at fitting the functional gradient accurately. But they impose strong regularization through their coarse partitioning. They force the model to pool gradient information across large regions, preventing overfitting to noise in individual pseudo-residuals.
+
+### Choosing the Right Inductive Bias
+
+This perspective gives us a principled way to think about choosing base learners:
+
+- **Trees**: Best when the true function has local discontinuities, interactions, and piecewise structure. The gradient field is naturally chunky.
+
+- **Splines/Kernels**: Best when the true function is smooth. The gradient field should vary continuously.
+
+- **Linear models**: Best when the relationship is approximately linear, or as a starting point before adding trees for nonlinearities.
+
+- **Neural networks**: Best when there are hierarchical features. The gradient field has compositional structure.
+
+The power of boosting is that we iteratively refine. Early iterations might learn coarse structure with shallow trees. Later iterations pick up fine details. The hypothesis class determines what patterns can be learned at each iteration, and how those patterns generalize.
+
 ## Connecting Back to Intuition
 
 Let's not lose sight of the simple picture we started with. At each iteration:
